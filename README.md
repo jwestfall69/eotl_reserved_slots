@@ -18,3 +18,24 @@ This plugin is expecting the following to exist (hardcoded as its what we need)
 * Columns in that table named 'streamID'
 
 This information provides the plugin with a list of VIP's and their associated icon.
+
+### ConVars
+<hr>
+
+**eotl_reserved_slots_seed_immunity_threshold [num]**
+
+If non-vip joins when less then equal to this many players on the server, they will be immune from being kicked for reserved slots.
+
+Default: 19
+
+**eotl_reserved_slots_seed_immunity_interval [seconds]**
+
+How often to check if a non-vip should have immunity.  Because of how tf2 works, when a map change happens all players effectively disconnect and reconnect to the server.  This makes it difficult to determine the number of actual players on the servers during map change.  This timer will kick off and run every [seconds] seconds after a map change to check if any non-vips should have immunity.
+
+Default: 60
+
+**eotl_reserved_slots_debug [0/1]**
+
+Enable additional debug logging.
+
+Default: 0 (disabled)
