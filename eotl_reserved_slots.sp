@@ -8,7 +8,7 @@
 #include <connect>
 
 #define PLUGIN_AUTHOR  "ack"
-#define PLUGIN_VERSION "0.10"
+#define PLUGIN_VERSION "0.11"
 
 #define DB_CONFIG      "default"
 #define DB_TABLE       "vip_users"
@@ -91,6 +91,11 @@ public void OnMapEnd() {
 public void OnClientAuthorized(int client, const char[] auth) {
 
     g_playerStates[client].isPreAuth = false;
+
+    if(IsClientSourceTV(client)) {
+        LogMessage("OnClientAuthorized %N (%s) is sourcetv", client, auth);
+        return;
+    }
 
     if(IsFakeClient(client)) {
         return;
@@ -201,6 +206,7 @@ public bool OnClientPreConnectEx(const char[] name, char password[255], const ch
     int preauth = 0;
     int kickable = 0;
     int kicking = 0;
+    int stv = 0;
     for(int client = 1;client <= MaxClients;client++) {
         if(!IsClientConnected(client)) {
             continue;
@@ -208,9 +214,10 @@ public bool OnClientPreConnectEx(const char[] name, char password[255], const ch
 
         clients++;
 
-        if(IsFakeClient(client)) {
+        if(IsClientSourceTV(client)) {
+            stv++;
+        } else if(IsFakeClient(client)) {
             kickable++;
-
         } else if(g_playerStates[client].isVip) {
             vips++;
         } else if(g_playerStates[client].isImmune) {
@@ -224,7 +231,7 @@ public bool OnClientPreConnectEx(const char[] name, char password[255], const ch
         }
     }
 
-    LogDebug("PreConnect: %s (%s) clients %d/%d (%d vips, %d immunes, %d preauth, %d kicking, %d kickable)", name, steamID, clients, MaxClients, vips, immunes, preauth, kicking, kickable);
+    LogDebug("PreConnect: %s (%s) clients %d/%d (%d vips, %d immunes, %d stv, %d preauth, %d kicking, %d kickable)", name, steamID, clients, MaxClients, vips, immunes, stv, preauth, kicking, kickable);
     if(clients < MaxClients) {
         LogDebug("PreConnect: %s (%s) empty slot available, ignoring", name, steamID);
         return true;
@@ -255,6 +262,10 @@ public bool OnClientPreConnectEx(const char[] name, char password[255], const ch
 int FindKickTarget() {
 
     for(int client = 1;client <= MaxClients;client++) {
+
+        if(IsClientSourceTV(client)) {
+            LogDebug("FindKickTarget: Skipping client %d, because client is sourceTV", client);
+        }
 
         if(IsFakeClient(client)) {
             LogDebug("FindKickTarget: Picked client %d because its a bot", client);
@@ -357,7 +368,7 @@ public Action CommandRSI(int caller, int args) {
     int immunes = 0;
     int vips = 0;
     int kickable = 0;
-
+    int stv = 0;
     for(int client = 1; client <= MaxClients;client++) {
         if(!IsClientConnected(client)) {
             continue;
@@ -365,7 +376,9 @@ public Action CommandRSI(int caller, int args) {
 
         clients++;
 
-        if(IsFakeClient(client)) {
+        if(IsClientSourceTV(client)) {
+            stv++;
+        } else if(IsFakeClient(client)) {
             kickable++;
         } else if(g_playerStates[client].isVip) {
             vips++;
@@ -376,7 +389,7 @@ public Action CommandRSI(int caller, int args) {
         }
     }
 
-    PrintToChat(caller, "\x01[\x03rsi\x01] clients %d/%d (%d vips, %d immunes, %d kickable)", clients, MaxClients, vips, immunes, kickable);
+    PrintToChat(caller, "\x01[\x03rsi\x01] clients %d/%d (%d vips, %d immunes, %d stv, %d kickable)", clients, MaxClients, vips, immunes, stv, kickable);
     PrintToChat(caller, "\x01[\x03rsi\x01] seed immunity threshold is <= %d players", g_cvSeedImmunityThreshold.IntValue);
 
     if(immunes == 0) {
