@@ -8,7 +8,7 @@
 #include <connect>
 
 #define PLUGIN_AUTHOR  "ack"
-#define PLUGIN_VERSION "0.11"
+#define PLUGIN_VERSION "0.12"
 
 #define DB_CONFIG      "default"
 #define DB_TABLE       "vip_users"
@@ -265,6 +265,7 @@ int FindKickTarget() {
 
         if(IsClientSourceTV(client)) {
             LogDebug("FindKickTarget: Skipping client %d, because client is sourceTV", client);
+            continue;
         }
 
         if(IsFakeClient(client)) {
