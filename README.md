@@ -34,6 +34,14 @@ How often to check if a non-vip should have immunity.  Because of how tf2 works,
 
 Default: 60
 
+**eotl_reserved_slots_seed_immunity_time [seconds]**
+
+This option provides a way for seed immunity to persist after a server crash and/or a player disconnecting.  When a player has seed immunity and there are *more* then seed immunity threshold players on the server, the plugin will save the current time to a client cookie every time an immune player changes teams (ie start of map / round).
+
+When a player joins the server, if their saved time + the [seconds] value from this cvar are greater then the current time, the player is automatically given immunity.
+
+Default: 1800 (30 minutes)
+
 **eotl_reserved_slots_debug [0/1]**
 
 Enable additional debug logging.

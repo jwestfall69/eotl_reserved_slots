@@ -3,12 +3,13 @@
 
 #include <sourcemod>
 #include <sdktools>
+#include <clientprefs>
 #define AUTOLOAD_EXTENSIONS
 #define REQUIRE_EXTENSIONS
 #include <connect>
 
 #define PLUGIN_AUTHOR  "ack"
-#define PLUGIN_VERSION "0.12"
+#define PLUGIN_VERSION "0.13"
 
 #define DB_CONFIG      "default"
 #define DB_TABLE       "vip_users"
@@ -39,18 +40,22 @@ StringMap g_seedImmunityMap;
 ConVar g_cvDebug;
 ConVar g_cvSeedImmunityThreshold;
 ConVar g_cvSeedImmunityInterval;
+ConVar g_cvSeedImmunityTime;
+Handle g_rsiSavedTime;
 
 public void OnPluginStart() {
     LogMessage("version %s starting (db config: %s, table: %s)", PLUGIN_VERSION, DB_CONFIG, DB_TABLE);
     g_cvDebug = CreateConVar("eotl_reserved_slots_debug", "0", "0/1 enable debug output", FCVAR_NONE, true, 0.0, true, 1.0);
     g_cvSeedImmunityThreshold = CreateConVar("eotl_reserved_slots_seed_immunity_threshold", "19", "if non-vip joins when less then this many players on the server, they will be immune from being kicked", FCVAR_NONE);
     g_cvSeedImmunityInterval = CreateConVar("eotl_reserved_slots_seed_immunity_interval", "60", "how often in seconds to see if players should get seed immunity", FCVAR_NONE, true, 15.0);
+    g_cvSeedImmunityTime = CreateConVar("eotl_reserved_slots_seed_immunity_time", "1800", "time in seconds immune player is allowed reconnect and still have immunity", FCVAR_NONE, true, 0.0);
 
     char error[256];
     if(GetExtensionFileStatus("connect.ext", error, sizeof(error)) != 1) {
         SetFailState("Required extension \"connect\" failed: %s", error);
     }
     g_seedImmunityMap = CreateTrie();
+    g_rsiSavedTime = RegClientCookie("rsiSavedTime", "rsiSavedTime", CookieAccess_Private);
 
     HookEvent("player_disconnect", EventClientRealDisconnect);
     HookEvent("player_team", EventPlayerTeam);
@@ -112,6 +117,13 @@ public void OnClientAuthorized(int client, const char[] auth) {
     if(GetTrieValue(g_seedImmunityMap, auth, junk)) {
         g_playerStates[client].isImmune = true;
         LogMessage("OnClientAuthorized %N (%s) has kick immunity for seeding", client, auth);
+    }
+}
+
+public void OnClientCookiesCached(int client) {
+    if(CheckRSITime(client)) {
+        g_playerStates[client].isImmune = true;
+        LogMessage("OnClientCookiesCached: client: %N giving kick immunity for previous seeding (rsi time)", client);
     }
 }
 
@@ -179,7 +191,13 @@ public Action EventPlayerTeam(Handle event, const char[] name, bool dontBroadcas
     }
 
     if(g_playerStates[client].isImmune) {
-        PrintToChat(client, "\x01[\x03VIP\x01] You have been given reserved slot kick immunity for helping seed the server. This will go away when you disconnect.  If you are having fun, please consider becoming a VIP \x03https://www.endofthelinegaming.com/vip/\x01");
+        int client_count = GetClientCount(false);
+        if(client_count > g_cvSeedImmunityThreshold.IntValue) {
+            SaveRSITime(client);
+            PrintToChat(client, "\x01[\x03VIP\x01] You have been given reserved slot kick immunity for helping seed the server (rst time updated). If you are having fun, please consider becoming a VIP \x03https://www.endofthelinegaming.com/vip/\x01");
+        } else {
+            PrintToChat(client, "\x01[\x03VIP\x01] You have been given reserved slot kick immunity for helping seed the server. If you are having fun, please consider becoming a VIP \x03https://www.endofthelinegaming.com/vip/\x01");
+        }
     } else {
         PrintToChat(client, "\x01[\x03VIP\x01] You can get reserved slot kick immunity if you join the server when there are less then %d players on", g_cvSeedImmunityThreshold.IntValue);
     }
@@ -370,6 +388,7 @@ public Action CommandRSI(int caller, int args) {
     int vips = 0;
     int kickable = 0;
     int stv = 0;
+
     for(int client = 1; client <= MaxClients;client++) {
         if(!IsClientConnected(client)) {
             continue;
@@ -467,6 +486,21 @@ bool Steam3ToSteam2(const char[]steam3, char[]steam2, int maxlen) {
     int m_unMod = m_unAccountID % 2;
     Format(steam2, maxlen, "STEAM_0:%d:%d", m_unMod, (m_unAccountID-m_unMod)/2);
     return true;
+}
+
+void SaveRSITime(int client) {
+    LogDebug("SaveRSITime: client: %N, rstTime updated: %d", GetTime());
+    SetClientCookie(client, g_rsiSavedTime, "touch");
+}
+
+bool CheckRSITime(int client) {
+    int rsiTime = GetClientCookieTime(client, g_rsiSavedTime);
+
+    LogDebug("CheckRSTTime: client: %N, rsiTime: %d, GetTime: %d", client, rsiTime, GetTime());
+    if(rsiTime + g_cvSeedImmunityTime.IntValue > GetTime()) {
+        return true;
+    }
+    return false;
 }
 
 void LogDebug(char []fmt, any...) {
