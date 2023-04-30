@@ -121,6 +121,23 @@ public void OnClientAuthorized(int client, const char[] auth) {
 }
 
 public void OnClientCookiesCached(int client) {
+
+    if(IsClientSourceTV(client)) {
+        return;
+    }
+
+    if(IsFakeClient(client)) {
+        return;
+    }
+
+    if(g_playerStates[client].isVip) {
+        return;
+    }
+
+    if(g_playerStates[client].isImmune) {
+        return;
+    }
+
     if(CheckRSITime(client)) {
         g_playerStates[client].isImmune = true;
         LogMessage("OnClientCookiesCached: client: %N giving kick immunity for previous seeding (rsi time)", client);
