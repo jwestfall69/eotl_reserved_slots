@@ -506,14 +506,14 @@ bool Steam3ToSteam2(const char[]steam3, char[]steam2, int maxlen) {
 }
 
 void SaveRSITime(int client) {
-    LogDebug("SaveRSITime: client: %N, rstTime updated: %d", GetTime());
+    LogDebug("SaveRSITime: client: %N, rsiTime updated: %d", client, GetTime());
     SetClientCookie(client, g_rsiSavedTime, "touch");
 }
 
 bool CheckRSITime(int client) {
     int rsiTime = GetClientCookieTime(client, g_rsiSavedTime);
 
-    LogDebug("CheckRSTTime: client: %N, rsiTime: %d, GetTime: %d", client, rsiTime, GetTime());
+    LogDebug("CheckRSITime: client: %N, rsiTime: %d, GetTime: %d", client, rsiTime, GetTime());
     if(rsiTime + g_cvSeedImmunityTime.IntValue > GetTime()) {
         return true;
     }
