@@ -45,7 +45,7 @@ Default: 60
 
 **eotl_reserved_slots_seed_immunity_time [seconds]**
 
-This option provides a way for seed immunity to persist after a server crash and/or a immune non-vip player disconnects.  When a player has seed immunity and there are **more** then seed_immunity_threshold players on the server, the plugin will save the current time to a client cookie every time an immune non-vip player changes teams (ie start of map / round).
+This option provides a way for seed immunity to persist after a server crash and/or a immune non-vip player disconnects.  When a player has seed immunity and there are **more** then seed_immunity_threshold players on the server, the plugin will save the current time to a config file (configs/eotl_reserved_slots.dat) at the end of each round.
 
 When a non-vip player joins the server, if their saved time + the [seconds] value from this cvar are greater then the current time, the player is automatically re-given immunity.
 

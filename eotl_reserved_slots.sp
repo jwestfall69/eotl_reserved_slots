@@ -8,12 +8,13 @@
 #define REQUIRE_EXTENSIONS
 #include <connect>
 
-#define PLUGIN_AUTHOR  "ack"
-#define PLUGIN_VERSION "0.13"
+#define PLUGIN_AUTHOR         "ack"
+#define PLUGIN_VERSION        "0.14"
 
-#define DB_CONFIG      "default"
-#define DB_TABLE       "vip_users"
-#define DB_COL_STEAMID "steamID"
+#define DB_CONFIG             "default"
+#define DB_TABLE              "vip_users"
+#define DB_COL_STEAMID        "steamID"
+#define RSI_CONFIG_FILE       "configs/eotl_reserved_slots.dat"
 
 #define RETRY_LOADVIPMAP_TIME 10.0
 #define PREAUTH_MAX_TIME      10.0
@@ -41,7 +42,9 @@ ConVar g_cvDebug;
 ConVar g_cvSeedImmunityThreshold;
 ConVar g_cvSeedImmunityInterval;
 ConVar g_cvSeedImmunityTime;
-Handle g_rsiSavedTime;
+KeyValues g_rsiTimes;
+bool g_roundOver;
+char g_rsiTimesFile [128];
 
 public void OnPluginStart() {
     LogMessage("version %s starting (db config: %s, table: %s)", PLUGIN_VERSION, DB_CONFIG, DB_TABLE);
@@ -55,10 +58,15 @@ public void OnPluginStart() {
         SetFailState("Required extension \"connect\" failed: %s", error);
     }
     g_seedImmunityMap = CreateTrie();
-    g_rsiSavedTime = RegClientCookie("rsiSavedTime", "rsiSavedTime", CookieAccess_Private);
 
-    HookEvent("player_disconnect", EventClientRealDisconnect);
+    BuildPath(Path_SM, g_rsiTimesFile, sizeof(g_rsiTimesFile), "%s", RSI_CONFIG_FILE);
+
     HookEvent("player_team", EventPlayerTeam);
+    HookEvent("teamplay_round_start", EventRoundStart, EventHookMode_PostNoCopy);
+    HookEvent("teamplay_round_stalemate", EventRoundEnd, EventHookMode_PostNoCopy);
+    HookEvent("teamplay_round_win", EventRoundEnd, EventHookMode_PostNoCopy);
+    HookEvent("teamplay_game_over", EventRoundEnd, EventHookMode_PostNoCopy);
+
     RegConsoleCmd("sm_rsi", CommandRSI);
 }
 
@@ -75,12 +83,15 @@ public void OnMapStart() {
         g_playerStates[client].kicking = false;
     }
 
+    g_roundOver = false;
     g_vipMap = CreateTrie();
 
     if(!LoadVipMap()) {
         LogError("Database issue, will retry every %f seconds", RETRY_LOADVIPMAP_TIME);
         CreateTimer(RETRY_LOADVIPMAP_TIME, RetryLoadVipMap);
     }
+
+    LoadRSITimes();
 
     // Its impossible get a count of players during map change
     // since everyone does a disconnect/connect, which takes the
@@ -91,6 +102,7 @@ public void OnMapStart() {
 
 public void OnMapEnd() {
     CloseHandle(g_vipMap);
+    CloseHandle(g_rsiTimes);
 }
 
 public void OnClientAuthorized(int client, const char[] auth) {
@@ -142,6 +154,29 @@ public void OnClientCookiesCached(int client) {
         g_playerStates[client].isImmune = true;
         LogMessage("OnClientCookiesCached: client: %N giving kick immunity for previous seeding (rsi time)", client);
     }
+}
+
+public Action EventRoundStart(Handle event, const char[] name, bool dontBroadcast) {
+    g_roundOver = false;
+    return Plugin_Continue;
+}
+
+public Action EventRoundEnd(Handle event, const char[] name, bool dontBroadcast) {
+
+    if(g_roundOver) {
+        return Plugin_Continue;
+    }
+    g_roundOver = true;
+
+    int client_count = GetClientCount(false);
+    if(client_count > g_cvSeedImmunityThreshold.IntValue) {
+        LogDebug("EventRoundEnd: updating rsi times");
+        UpdateRSITimes();
+    } else {
+        LogDebug("EventRoundEnd: not updating rsi times because not enough players are on the server");
+    }
+
+    return Plugin_Continue;
 }
 
 // There doesnt seem to be a callback for failed client auth, so
@@ -208,13 +243,7 @@ public Action EventPlayerTeam(Handle event, const char[] name, bool dontBroadcas
     }
 
     if(g_playerStates[client].isImmune) {
-        int client_count = GetClientCount(false);
-        if(client_count > g_cvSeedImmunityThreshold.IntValue) {
-            SaveRSITime(client);
-            PrintToChat(client, "\x01[\x03VIP\x01] You have been given reserved slot kick immunity for helping seed the server (rst time updated). If you are having fun, please consider becoming a VIP \x03https://www.endofthelinegaming.com/vip/\x01");
-        } else {
-            PrintToChat(client, "\x01[\x03VIP\x01] You have been given reserved slot kick immunity for helping seed the server. If you are having fun, please consider becoming a VIP \x03https://www.endofthelinegaming.com/vip/\x01");
-        }
+        PrintToChat(client, "\x01[\x03VIP\x01] You have been given reserved slot kick immunity for helping seed the server. If you are having fun, please consider becoming a VIP \x03https://www.endofthelinegaming.com/vip/\x01");
     } else {
         PrintToChat(client, "\x01[\x03VIP\x01] You can get reserved slot kick immunity if you join the server when there are less then %d players on", g_cvSeedImmunityThreshold.IntValue);
     }
@@ -485,7 +514,7 @@ void CheckImmunity() {
         if(GetClientAuthId(client, AuthId_Steam2, steamID, sizeof(steamID))) {
             LogMessage("CheckImmunity: %N (%s) giving kick immunity for seeding", client, steamID);
             if(IsClientInGame(client)) {
-                PrintToChat(client, "\x01[\x03VIP\x01] You have been given reserved slot kick immunity for helping seed the server. This will go away when you disconnect.  If you are having fun, please consider becoming a VIP \x03https://www.endofthelinegaming.com/vip/\x01");
+                PrintToChat(client, "\x01[\x03VIP\x01] You have been given reserved slot kick immunity for helping seed the server. If you are having fun, please consider becoming a VIP \x03https://www.endofthelinegaming.com/vip/\x01");
             }
             SetTrieValue(g_seedImmunityMap, steamID, 1, true);
             g_playerStates[client].isImmune = true;
@@ -505,13 +534,112 @@ bool Steam3ToSteam2(const char[]steam3, char[]steam2, int maxlen) {
     return true;
 }
 
-void SaveRSITime(int client) {
-    LogDebug("SaveRSITime: client: %N, rsiTime updated: %d", client, GetTime());
-    SetClientCookie(client, g_rsiSavedTime, "touch");
+void LoadRSITimes() {
+    g_rsiTimes = CreateKeyValues("rsi");
+
+    if(!FileToKeyValues(g_rsiTimes, g_rsiTimesFile)) {
+        LogMessage("LoadRSITimes: failed to load %s, starting from scratch", g_rsiTimesFile);
+        return;
+    }
+
+    int curTime = GetTime();
+    bool needSave = false;
+    char steamID[32];
+    int rsiTime;
+    LogDebug("LoadRSITimes:");
+
+    g_rsiTimes.JumpToKey("rsi");
+    if(!g_rsiTimes.GotoFirstSubKey()) {
+        LogDebug("no saved rsi times");
+        return;
+    }
+
+    // do a little cleanup while we load
+    do {
+            g_rsiTimes.GetSectionName(steamID, sizeof(steamID));
+            rsiTime = g_rsiTimes.GetNum("rsiTime", 0);
+
+            if(rsiTime > curTime) {
+                LogDebug("  steamID: %s, rsiTime: %d is in the future? clamping to current time (%d)", steamID, rsiTime, curTime);
+                rsiTime = curTime;
+                needSave = true;
+            } else if(rsiTime + g_cvSeedImmunityTime.IntValue < curTime) {
+                LogDebug("  steamID: %s, rsiTime: %d is expired, removing", steamID, rsiTime);
+                g_rsiTimes.DeleteThis();
+                needSave = true;
+            } else {
+                LogDebug("  steamID: %s, rsiTime: %d", steamID, rsiTime);
+            }
+    } while(g_rsiTimes.GotoNextKey());
+
+    if(needSave) {
+        SaveRSITimes();
+    }
+}
+
+void UpdateRSITimes() {
+    int rsiTime = GetTime();
+    bool needSave = false;
+    char steamID[32];
+
+    LogDebug("UpdateRSITimes:");
+    for(int client = 1;client <= MaxClients; client++) {
+        if(!IsClientConnected(client)) {
+            continue;
+        }
+
+        if(IsFakeClient(client)) {
+            continue;
+        }
+
+        if(g_playerStates[client].isVip) {
+            continue;
+        }
+
+        if(!g_playerStates[client].isImmune) {
+            continue;
+        }
+
+        if(!GetClientAuthId(client, AuthId_Steam2, steamID, sizeof(steamID))) {
+            LogMessage("UpdateRSITimes: Failed to get steamId for client %N, skipping them", client);
+            continue;
+        }
+
+        LogDebug("  steamID: %s (%N), rsiTime updated: %d", steamID, client, rsiTime);
+        g_rsiTimes.Rewind();
+        g_rsiTimes.JumpToKey(steamID, true);
+        g_rsiTimes.SetNum("rsiTime", rsiTime);
+        needSave = true;
+    }
+
+    if(needSave) {
+        SaveRSITimes();
+    }
+}
+
+void SaveRSITimes() {
+    g_rsiTimes.Rewind();
+    if(!g_rsiTimes.ExportToFile(g_rsiTimesFile)) {
+        LogDebug("ERROR failed to save rsi times to %s", g_rsiTimesFile);
+        return;
+    }
+    LogDebug("Saved rsi times");
 }
 
 bool CheckRSITime(int client) {
-    int rsiTime = GetClientCookieTime(client, g_rsiSavedTime);
+    char steamID[32];
+    if(!GetClientAuthId(client, AuthId_Steam2, steamID, sizeof(steamID))) {
+        LogMessage("CheckRSITime: failed to get steamId for client %N", client);
+        return false;
+    }
+
+    g_rsiTimes.Rewind();
+    if(!g_rsiTimes.JumpToKey(steamID)) {
+        LogDebug("CheckRSITime: %N (%s) has no saved rsi time", client, steamID);
+        return false;
+    }
+
+    int rsiTime = g_rsiTimes.GetNum("rsiTime", 0);
 
     LogDebug("CheckRSITime: client: %N, rsiTime: %d, GetTime: %d", client, rsiTime, GetTime());
     if(rsiTime + g_cvSeedImmunityTime.IntValue > GetTime()) {
