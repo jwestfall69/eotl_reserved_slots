@@ -9,7 +9,7 @@
 #include <connect>
 
 #define PLUGIN_AUTHOR         "ack"
-#define PLUGIN_VERSION        "0.14"
+#define PLUGIN_VERSION        "0.15"
 
 #define DB_CONFIG             "default"
 #define DB_TABLE              "vip_users"
@@ -17,7 +17,6 @@
 #define RSI_CONFIG_FILE       "configs/eotl_reserved_slots.dat"
 
 #define RETRY_LOADVIPMAP_TIME 10.0
-#define PREAUTH_MAX_TIME      10.0
 
 public Plugin myinfo = {
 	name = "eotl_reserved_slots",
@@ -29,6 +28,7 @@ public Plugin myinfo = {
 
 enum struct PlayerState {
     bool isPreAuth;         // when a client is connected, but steam id isn't auth'd yet
+    int preAuthTimeStart;   // debug
     bool isVip;
     bool isImmune;
     bool kicking;
@@ -39,6 +39,7 @@ PlayerState g_playerStates[MAXPLAYERS + 1];
 StringMap g_vipMap;
 StringMap g_seedImmunityMap;
 ConVar g_cvDebug;
+ConVar g_cvPreAuthTime;
 ConVar g_cvSeedImmunityThreshold;
 ConVar g_cvSeedImmunityInterval;
 ConVar g_cvSeedImmunityTime;
@@ -49,6 +50,7 @@ char g_rsiTimesFile [128];
 public void OnPluginStart() {
     LogMessage("version %s starting (db config: %s, table: %s)", PLUGIN_VERSION, DB_CONFIG, DB_TABLE);
     g_cvDebug = CreateConVar("eotl_reserved_slots_debug", "0", "0/1 enable debug output", FCVAR_NONE, true, 0.0, true, 1.0);
+    g_cvPreAuthTime = CreateConVar("eotl_reserved_slots_preauth_time", "20", "how long in seconds to allow a client to auth their steamID", FCVAR_NONE, true, 1.0);
     g_cvSeedImmunityThreshold = CreateConVar("eotl_reserved_slots_seed_immunity_threshold", "19", "if non-vip joins when less then this many players on the server, they will be immune from being kicked", FCVAR_NONE);
     g_cvSeedImmunityInterval = CreateConVar("eotl_reserved_slots_seed_immunity_interval", "60", "how often in seconds to see if players should get seed immunity", FCVAR_NONE, true, 15.0);
     g_cvSeedImmunityTime = CreateConVar("eotl_reserved_slots_seed_immunity_time", "1800", "time in seconds immune player is allowed reconnect and still have immunity", FCVAR_NONE, true, 0.0);
@@ -108,7 +110,6 @@ public void OnMapEnd() {
 public void OnClientAuthorized(int client, const char[] auth) {
 
     g_playerStates[client].isPreAuth = false;
-
     if(IsClientSourceTV(client)) {
         LogMessage("OnClientAuthorized %N (%s) is sourcetv", client, auth);
         return;
@@ -118,12 +119,16 @@ public void OnClientAuthorized(int client, const char[] auth) {
         return;
     }
 
+    int diff = GetTime() - g_playerStates[client].preAuthTimeStart;
+    LogDebug("OnClientAuthorized %N (%s) took %d seconds to auth", client, auth, diff);
+
     int junk;
     if(GetTrieValue(g_vipMap, auth, junk)) {
         g_playerStates[client].isVip = true;
         LogMessage("OnClientAuthorized %N (%s) is a vip", client, auth);
         return;
     }
+    LogMessage("OnClientAuthorized %N (%s) is NOT a vip", client, auth);
 
     // user already flagged as immune
     if(GetTrieValue(g_seedImmunityMap, auth, junk)) {
@@ -180,7 +185,7 @@ public Action EventRoundEnd(Handle event, const char[] name, bool dontBroadcast)
 }
 
 // There doesnt seem to be a callback for failed client auth, so
-// if the client isn't authed within PREAUTH_MAX_TIME force clear
+// if the client isn't authed within g_cvPreAuthTime.FloatValue force clear
 // the isPreAuth flag on them.
 public Action ClientClearPreAuth(Handle timer, int client) {
 
@@ -192,13 +197,14 @@ public Action ClientClearPreAuth(Handle timer, int client) {
 }
 
 public void OnClientConnected(int client) {
-    LogDebug("OnClientConnected: %d", client);
+    LogDebug("OnClientConnected: %d (%N) PreAuthTimer: %f", client, client, g_cvPreAuthTime.FloatValue);
     g_playerStates[client].isPreAuth = true;
     g_playerStates[client].isVip = false;
     g_playerStates[client].isImmune = false;
     g_playerStates[client].kicking = false;
+    g_playerStates[client].preAuthTimeStart = GetTime();
 
-    CreateTimer(PREAUTH_MAX_TIME, ClientClearPreAuth, client);
+    CreateTimer(g_cvPreAuthTime.FloatValue, ClientClearPreAuth, client);
 }
 
 public void OnClientDisconnect(int client) {

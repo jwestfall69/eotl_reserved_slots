@@ -31,6 +31,12 @@ This will display details about how many vips, non-vip immune, and kickable clie
 ### ConVars
 <hr>
 
+**eotl_reserved_slots_preauth_time [seconds]**
+
+When I client is connected there is a period of time before the client's steamID is authorized by the game/steam.  Before this happens we won't know the steamID of the client and thus can't verify they are a VIP.  This setting the maximum amount of time we will wait for the client's steamID to authorize. During this preauth time the client is immune from being kicked.
+
+Default: 20
+
 **eotl_reserved_slots_seed_immunity_threshold [num]**
 
 If a non-vip joins when less then equal to this many players on the server, they will be immune from being kicked for reserved slots.  The default value is geared towards a 32 player server.
