@@ -11,15 +11,8 @@ The plugin also implements seed immunity for non-vips.  ie: if a non-vip helps s
 ### Dependencies
 <hr>
 
-**Database**<br>
+This plugin depends on eotl_vip_core plugin.
 
-This plugin is expecting the following to exist (hardcoded as its what we need)
-
-* Database config named 'default'
-* Table on that database named 'vip_users'
-* Columns in that table named 'streamID'
-
-This information provides the plugin with a list of VIP's steamIDs.
 
 ### Say Commands
 <hr>

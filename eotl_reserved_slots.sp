@@ -7,13 +7,11 @@
 #define AUTOLOAD_EXTENSIONS
 #define REQUIRE_EXTENSIONS
 #include <connect>
+#include "../eotl_vip_core/eotl_vip_core.inc"
 
 #define PLUGIN_AUTHOR         "ack"
-#define PLUGIN_VERSION        "0.15"
+#define PLUGIN_VERSION        "2.01"
 
-#define DB_CONFIG             "default"
-#define DB_TABLE              "vip_users"
-#define DB_COL_STEAMID        "steamID"
 #define RSI_CONFIG_FILE       "configs/eotl_reserved_slots.dat"
 
 #define RETRY_LOADVIPMAP_TIME 10.0
@@ -29,7 +27,6 @@ public Plugin myinfo = {
 enum struct PlayerState {
     bool isPreAuth;         // when a client is connected, but steam id isn't auth'd yet
     int preAuthTimeStart;   // debug
-    bool isVip;
     bool isImmune;
     bool kicking;
 }
@@ -48,7 +45,7 @@ bool g_roundOver;
 char g_rsiTimesFile [128];
 
 public void OnPluginStart() {
-    LogMessage("version %s starting (db config: %s, table: %s)", PLUGIN_VERSION, DB_CONFIG, DB_TABLE);
+    LogMessage("version %s starting", PLUGIN_VERSION);
     g_cvDebug = CreateConVar("eotl_reserved_slots_debug", "0", "0/1 enable debug output", FCVAR_NONE, true, 0.0, true, 1.0);
     g_cvPreAuthTime = CreateConVar("eotl_reserved_slots_preauth_time", "20", "how long in seconds to allow a client to auth their steamID", FCVAR_NONE, true, 1.0);
     g_cvSeedImmunityThreshold = CreateConVar("eotl_reserved_slots_seed_immunity_threshold", "19", "if non-vip joins when less then this many players on the server, they will be immune from being kicked", FCVAR_NONE);
@@ -74,24 +71,14 @@ public void OnPluginStart() {
 
 public void OnMapStart() {
 
-    if(!SQL_CheckConfig(DB_CONFIG)) {
-        SetFailState("Database config \"%s\" doesn't exist", DB_CONFIG);
-    }
-
     for(int client = 1;client <= MaxClients; client++) {
         g_playerStates[client].isPreAuth = false;
-        g_playerStates[client].isVip = false;
         g_playerStates[client].isImmune = false;
         g_playerStates[client].kicking = false;
     }
 
     g_roundOver = false;
     g_vipMap = CreateTrie();
-
-    if(!LoadVipMap()) {
-        LogError("Database issue, will retry every %f seconds", RETRY_LOADVIPMAP_TIME);
-        CreateTimer(RETRY_LOADVIPMAP_TIME, RetryLoadVipMap);
-    }
 
     LoadRSITimes();
 
@@ -122,15 +109,14 @@ public void OnClientAuthorized(int client, const char[] auth) {
     int diff = GetTime() - g_playerStates[client].preAuthTimeStart;
     LogDebug("OnClientAuthorized %N (%s) took %d seconds to auth", client, auth, diff);
 
-    int junk;
-    if(GetTrieValue(g_vipMap, auth, junk)) {
-        g_playerStates[client].isVip = true;
+    if(EotlIsSteamIDVip(auth)) {
         LogMessage("OnClientAuthorized %N (%s) is a vip", client, auth);
         return;
     }
     LogMessage("OnClientAuthorized %N (%s) is NOT a vip", client, auth);
 
     // user already flagged as immune
+    int junk;
     if(GetTrieValue(g_seedImmunityMap, auth, junk)) {
         g_playerStates[client].isImmune = true;
         LogMessage("OnClientAuthorized %N (%s) has kick immunity for seeding", client, auth);
@@ -147,7 +133,7 @@ public void OnClientCookiesCached(int client) {
         return;
     }
 
-    if(g_playerStates[client].isVip) {
+    if(EotlIsClientVip(client)) {
         return;
     }
 
@@ -199,7 +185,6 @@ public Action ClientClearPreAuth(Handle timer, int client) {
 public void OnClientConnected(int client) {
     LogDebug("OnClientConnected: %d (%N) PreAuthTimer: %f", client, client, g_cvPreAuthTime.FloatValue);
     g_playerStates[client].isPreAuth = true;
-    g_playerStates[client].isVip = false;
     g_playerStates[client].isImmune = false;
     g_playerStates[client].kicking = false;
     g_playerStates[client].preAuthTimeStart = GetTime();
@@ -210,7 +195,6 @@ public void OnClientConnected(int client) {
 public void OnClientDisconnect(int client) {
     LogDebug("OnClientDisconnect: %d", client);
     g_playerStates[client].isPreAuth = false;
-    g_playerStates[client].isVip = false;
     g_playerStates[client].isImmune = false;
     g_playerStates[client].kicking = false;
 }
@@ -239,7 +223,7 @@ public Action EventPlayerTeam(Handle event, const char[] name, bool dontBroadcas
         return Plugin_Continue;
     }
 
-    if(g_playerStates[client].isVip) {
+    if(EotlIsClientVip(client)) {
         return Plugin_Continue;
     }
 
@@ -262,8 +246,7 @@ public Action EventPlayerTeam(Handle event, const char[] name, bool dontBroadcas
 // both clients before either of them have been fully connected?
 public bool OnClientPreConnectEx(const char[] name, char password[255], const char[] ip, const char[] steamID, char rejectReason[255]) {
 
-    int junk;
-    if(!GetTrieValue(g_vipMap, steamID, junk)) {
+    if(!EotlIsSteamIDVip(steamID)) {
         LogDebug("PreConnect: %s (%s) is not vip, ignoring", name, steamID);
         return true;
     }
@@ -288,7 +271,7 @@ public bool OnClientPreConnectEx(const char[] name, char password[255], const ch
             stv++;
         } else if(IsFakeClient(client)) {
             kickable++;
-        } else if(g_playerStates[client].isVip) {
+        } else if(EotlIsClientVip(client)) {
             vips++;
         } else if(g_playerStates[client].isImmune) {
             immunes++;
@@ -359,79 +342,13 @@ int FindKickTarget() {
             continue;
         }
 
-        if(!g_playerStates[client].isVip) {
+        if(!EotlIsClientVip(client)) {
             LogDebug("FindKickTarget: Picked client %d because they aren't a VIP", client);
             return client;
         }
     }
     LogMessage("FindKickTarget: No target found");
     return -1;
-}
-
-public Action RetryLoadVipMap(Handle timer) {
-    if(!LoadVipMap()) {
-        CreateTimer(RETRY_LOADVIPMAP_TIME, RetryLoadVipMap);
-        return Plugin_Continue;
-    }
-
-    LogMessage("Setting up isVip for connected clients");
-    char steamID[32];
-    int junk;
-    for(int client = 1;client <= MaxClients;client++) {
-        if(!IsClientConnected(client) || IsFakeClient(client)) {
-            continue;
-        }
-
-        if(GetClientAuthId(client, AuthId_Steam2, steamID, sizeof(steamID))) {
-            if(GetTrieValue(g_vipMap, steamID, junk)) {
-                LogMessage("%N (%s) is a vip", client, steamID);
-                g_playerStates[client].isVip = true;
-            }
-        }
-    }
-    return Plugin_Continue;
-}
-
-// grab a list of vips (steamIDs) from the database and store them in a map
-bool LoadVipMap() {
-    Handle dbh;
-    char error[256];
-
-    dbh = SQL_Connect(DB_CONFIG, false, error, sizeof(error));
-    if(dbh == INVALID_HANDLE) {
-        LogError("LoadVipMap: connection to database failed (DB config: %s): %s", DB_CONFIG, error);
-        return false;
-    }
-
-    char query[128];
-    Format(query, sizeof(query), "SELECT %s from %s", DB_COL_STEAMID, DB_TABLE);
-
-    DBResultSet results;
-    results = SQL_Query(dbh, query);
-    CloseHandle(dbh);
-
-    // this seems to be an indication we aren't connected to the database
-    if(results == INVALID_HANDLE) {
-        LogError("LoadVipMap: SQL_Query returned INVALID_HANDLE. Something maybe wrong with the connection to the database");
-        return false;
-    }
-
-    if(results.RowCount <= 0) {
-        LogMessage("LoadVipMap: SQL_Query return no results!");
-        CloseHandle(results);
-        return true;
-    }
-
-    while(results.FetchRow()) {
-        char steamID[32];
-        if(results.FetchString(0, steamID, sizeof(steamID))) {
-            SetTrieValue(g_vipMap, steamID, 1, true);
-        }
-    }
-
-    LogMessage("Loaded %d vips from database", GetTrieSize(g_vipMap));
-    CloseHandle(results);
-    return true;
 }
 
 public Action CommandRSI(int caller, int args) {
@@ -452,7 +369,7 @@ public Action CommandRSI(int caller, int args) {
             stv++;
         } else if(IsFakeClient(client)) {
             kickable++;
-        } else if(g_playerStates[client].isVip) {
+        } else if(EotlIsClientVip(client)) {
             vips++;
         } else if(g_playerStates[client].isImmune) {
             immunes++;
@@ -508,7 +425,7 @@ void CheckImmunity() {
             continue;
         }
 
-        if(g_playerStates[client].isVip) {
+        if(EotlIsClientVip(client)) {
             continue;
         }
 
@@ -598,7 +515,7 @@ void UpdateRSITimes() {
             continue;
         }
 
-        if(g_playerStates[client].isVip) {
+        if(EotlIsClientVip(client)) {
             continue;
         }
 
