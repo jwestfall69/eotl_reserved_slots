@@ -11,7 +11,8 @@ The plugin also implements seed immunity for non-vips.  ie: if a non-vip helps s
 ### Dependencies
 <hr>
 
-This plugin depends on eotl_vip_core plugin.
+* [connect extension](https://forums.alliedmods.net/showthread.php?t=162489 "connect extension")
+* eotl_vip_core plugin.
 
 
 ### Say Commands
